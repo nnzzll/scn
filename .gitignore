@@ -1,0 +1,5 @@
+data/2mm/*
+*/__pycache__
+tmp/*
+run/*
+__pycache__
