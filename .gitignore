@@ -3,3 +3,4 @@ data/2mm/*
 tmp/*
 run/*
 __pycache__
+result

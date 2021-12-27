@@ -103,16 +103,21 @@ class Aggregator(object):
         self.location: List[int] = []
 
     def Add(self, pred: torch.Tensor, z: int):
-        '''pred:(C,Z,Y,X)'''
+        '''pred:(1,C,Z,Y,X)'''
         self.patches.append(pred)
         self.location.append(z)
 
-    def Execute(self) -> torch.Tensor:
+    def Execute(self, mode: str = 'max') -> torch.Tensor:
         shape = (self.location[-1]+128, 96, 96)
         result = torch.zeros((len(self.patches), self.channel, *shape))
         for i, z in enumerate(self.location):
             result[i, :, z:z+128] = self.patches[i].cpu()
-        result = torch.max(result, dim=0)[0]
+        if mode =='max':
+            result = torch.max(result, dim=0)[0]
+        elif mode =='average':
+            result = torch.mean(result,dim=0)
+        else:
+            raise ValueError(f"Unsupported mode:{mode}")
         return result.unsqueeze(0)
 
 
