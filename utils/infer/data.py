@@ -3,7 +3,7 @@ import numpy as np
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 
-from typing import Tuple, List
+from typing import Dict, Tuple, List
 from scipy.ndimage import gaussian_filter
 from torch.utils.data.dataset import TensorDataset
 from torch.utils.data.dataloader import DataLoader
@@ -77,8 +77,8 @@ class Image(object):
                 bbox[2]:bbox[3],
                 bbox[4]:bbox[5]
             ] = output[BBOX[0]:BBOX[1], BBOX[2]:BBOX[3], BBOX[4]:BBOX[5]]
-        # torch.cuda.empty_cache()
-        result[0] = 1-result[0]
+        torch.cuda.empty_cache()
+        result[0] = 1 - result[0]
         result = np.argmax(result, 0).astype(np.uint8)
         return result
 
@@ -109,40 +109,30 @@ class Image(object):
         gt_landmark = np.array([Z, Y, X]).T
         return one_class_dist(gt_landmark, landmark)
 
-    def test_segmentation(self, model) -> Tuple[np.ndarray, List[float]]:
-        # TODO
-        shape = list(self.standard_img.GetSize())[::-1]
-        mask = sitk.GetArrayFromImage(self.standard_mask)
-        gt_landmark = generate_one_channel_landmark(mask)
-        Z, Y, X = np.where(gt_landmark)
-        gt_landmark = np.array([Z, Y, X]).T
-        patches = crop_patch(
-            self.standard_img, gt_landmark, self.standard_mask)
-        result = np.zeros((len(patches)+1, *shape), dtype=np.float32)
-        dice_list = []
-        class_list = np.unique(mask)[1:].tolist()[::-1]
-        gaussian = Gaussian(3,None,5,norm=True).to(self.device)
-        for i, (img, gt, landmark) in enumerate(patches):
-            heatmap = gaussian(landmark.to(self.device))
-            inputs = torch.cat([img.to(self.device), heatmap], dim=1)
-            with torch.no_grad():
-                output = model(inputs)
-            output = output.squeeze().cpu().numpy()
-            output[output < 0.5] = 0
-            bbox, BBOX = get_bbox(shape, gt_landmark[i])
-            result[0, bbox[0]:bbox[1], bbox[2]:bbox[3], bbox[4]:bbox[5]] = 1
-            result[
-                i+1,
-                bbox[0]:bbox[1],
-                bbox[2]:bbox[3],
-                bbox[4]:bbox[5]
-            ] = output[BBOX[0]:BBOX[1], BBOX[2]:BBOX[3], BBOX[4]:BBOX[5]]
-            output[output > 0] = 1
-            dice_list.append(Dice(output, gt.squeeze().numpy()))
-        torch.cuda.empty_cache()
-        result[0] = 1-result[0]
-        result = np.argmax(result, 0).astype(np.uint8)
-        return result, dice_list, class_list
+    def test_segmentation(self, seg, landmark, threshold=12.5) -> Dict[int,float]:
+        gt = sitk.GetArrayFromImage(self.standard_mask)
+        gt_landmark = generate_one_channel_landmark(gt)
+        gt_landmark = np.array([*np.where(gt_landmark)]).T
+        classes = np.unique(gt)[1:].tolist()[::-1]
+        pred_classes = np.unique(seg)[1:].tolist()
+        dice = {}
+        i = 0  # index of grountruth
+        j = 0  # index of prediction
+        while(i < len(gt_landmark) and j < len(landmark)):
+            pt_gt = gt_landmark[i]
+            pt_pr = landmark[j]
+            if dist(pt_gt, pt_pr) < threshold:
+                pred = seg == pred_classes[j]
+                mask = gt == classes[i]
+                dice[classes[i]] = Dice(pred, mask)
+                i += 1
+                j += 1
+                continue
+            if landmark[j, 0] < landmark[i, 0]:
+                j += 1
+            else:
+                i += 1
+        return dice
 
 
 def get_bbox(shape, center, patch_size: List[int] = [96, 128, 128]):
@@ -296,3 +286,7 @@ def Dice(pred: np.ndarray, target: np.ndarray, smooth: int = 1) -> float:
         np.count_nonzero(pred)+np.count_nonzero(target)+smooth
     )
     return dice_coef
+
+
+def dist(x, y):
+    return np.sqrt(np.power(x-y, 2).sum())
